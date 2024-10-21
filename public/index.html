@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Speedtest</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+  <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+  <style>
+    body { 
+      font-family: 'Roboto', sans-serif; 
+      display: flex; 
+      flex-direction: column; 
+      align-items: center; 
+      justify-content: center; 
+      min-height: 100vh;  
+      background-color: #f4f4f4;  
+      margin: 0; 
+    }
+    h1 { color: #333; }
+    #results { 
+      margin-top: 20px; 
+      font-size: 18px; 
+      text-align: center; 
+    }
+    .result { margin-bottom: 10px; }
+    .chart-container { 
+      width: 80%; 
+      height: 300px; 
+      margin: 20px auto; 
+    }
+    #progressBar {
+      width: 50%;
+      height: 20px;
+      background-color: #e0e0e0;
+      border-radius: 5px;
+      margin-bottom: 20px;
+    }
+    #progressBarFill {
+      height: 100%;
+      background-color: #4caf50;
+      width: 0%;
+      border-radius: 5px;
+    }
+  </style>
+</head>
+<body>
+  <h1>Speedtest</h1>
+  <button id="startButton">Test starten</button>
+  <div id="progressBar">
+    <div id="progressBarFill"></div>
+  </div>
+  <div id="results">
+    <div class="result">Bitte klicken Sie auf "Test starten".</div>
+  </div>
+  <div class="chart-container">
+    <div id="speedChart"></div>
+  </div>
+  <script>
+    const NUM_FILES = 5; 
+    const socket = io();
+
+    const resultsDiv = document.getElementById('results');
+    const startButton = document.getElementById('startButton');
+    const progressBarFill = document.getElementById('progressBarFill');
+    let averagePing, downloadSpeed, uploadSpeed;
+
+    function createChart() {
+      var data = [{
+        x: ['Ping (ms)', 'Download (Mbps)', 'Upload (Mbps)'],
+        y: [averagePing, downloadSpeed, uploadSpeed],
+        type: 'bar',
+        marker: {
+          color: ['rgba(255, 99, 132, 0.8)', 'rgba(54, 162, 235, 0.8)', 'rgba(255, 206, 86, 0.8)']
+        }
+      }];
+
+      var layout = {
+        title: 'Speedtest Ergebnisse',
+        yaxis: {
+          title: 'Geschwindigkeit',
+          rangemode: 'tozero' 
+        }
+      };
+
+      Plotly.newPlot('speedChart', data, layout);
+    }
+
+    socket.on('connect', () => {
+      console.log('Connected to server');
+    });
+
+    socket.on('disconnect', () => {
+      console.log('Disconnected from server');
+      resultsDiv.innerHTML += '<div class="result">Verbindung zum Server getrennt!</div>';
+    });
+
+    // Ping Test
+    let pingCount = 10, pings = [], pingId = 0;
+
+    function startPingTest() {
+      // Alte Ergebnisse löschen:
+      resultsDiv.innerHTML = '<div class="result">Test läuft...</div>';
+
+      updateProgressBar(0);
+
+      // Alten pong Listener entfernen
+      socket.off('pong'); 
+
+      socket.on('pong', (data) => { 
+        if (data.id === pingId) { 
+          pings.push(Date.now() - data.time);
+          if (--pingCount > 0) setTimeout(sendPing, 100);
+          else {
+            averagePing = pings.reduce((a, b) => a + b, 0) / pings.length;
+            resultsDiv.innerHTML += '<div class="result">Ping: ' + averagePing.toFixed(2) + ' ms</div>'; 
+
+            // Jitter aus den Ping-Werten berechnen (Client-seitig)
+            let jitter = null;
+            if (pings.length > 1) {
+              const meanPing = averagePing;
+              const squaredDifferences = pings.map(ping => Math.pow(ping - meanPing, 2));
+              const variance = squaredDifferences.reduce((a, b) => a + b, 0) / (pings.length - 1);
+              jitter = Math.sqrt(variance);
+            }
+            if (jitter !== null) {
+              resultsDiv.innerHTML += '<div class="result">Jitter: ' + jitter.toFixed(2) + ' ms</div>';
+            }
+
+            updateProgressBar(10);
+            createChart();
+            startDownloadTest();
+
+            // ping_result Event an den Server senden
+            socket.emit('ping_result', { ping: averagePing, jitter: jitter }); 
+          }
+        }
+      });
+      sendPing();
+    }
+
+    function sendPing() { 
+      pingId++;
+      socket.emit('ping', { time: Date.now(), id: pingId }); 
+    }
+
+    // Download Test
+    let downloadStartTime;
+    let downloadedFiles = 0;
+function startDownloadTest() {
+      downloadStartTime = Date.now();
+      downloadedFiles = 0;
+      socket.emit('download_start');
+    }
+
+    socket.on('download_order', (data) => {
+      updateProgressBar(30);
+      let fileOrder = data.order;
+      function downloadNextFile() {
+        if (downloadedFiles < NUM_FILES) {
+          let fileId = fileOrder[downloadedFiles];
+          fetch('/download/' + fileId)
+            .then(() => {
+              downloadedFiles++;
+              downloadNextFile();
+            })
+            .catch(error => {
+              console.error('Download error:', error);
+              resultsDiv.innerHTML += '<div class="result">Download fehlgeschlagen: ' + error + '</div>'; 
+              socket.emit('download_end'); 
+            });
+        } else {
+          socket.emit('download_end'); 
+        }
+      }
+      downloadNextFile();
+    });
+
+    socket.on('download_result', (data) => {
+      updateProgressBar(60);
+      downloadSpeed = data.speed;
+      resultsDiv.innerHTML += '<div class="result">Download: ' + downloadSpeed.toFixed(2) + ' Mbps</div>'; 
+      createChart();
+      startUploadTest(); 
+    });
+
+    // Upload Test
+    let uploadStartTime;
+    let uploadedChunks = 0;
+    let chunkSize = 1024 * 1024; 
+
+    function startUploadTest() {
+      uploadStartTime = Date.now();
+      uploadedChunks = 0;
+      socket.emit('upload_start');
+    }
+
+    socket.on('upload_chunk_size', (data) => {
+      updateProgressBar(70);
+      chunkSize = data.size;
+      uploadNextChunk(); 
+    });
+
+    function uploadNextChunk() {
+      if (uploadedChunks < NUM_FILES) {
+        let data = new Uint8Array(chunkSize);
+        fetch('/upload', { 
+          method: 'POST', 
+          body: data,
+          credentials: 'same-origin'
+        })
+          .then(() => {
+            uploadedChunks++;
+            uploadNextChunk();
+          })
+          .catch(error => {
+            console.error('Upload error:', error);
+            resultsDiv.innerHTML += '<div class="result">Upload fehlgeschlagen: ' + error + '</div>'; 
+            socket.emit('upload_end'); 
+          });
+      } else {
+        socket.emit('upload_end'); 
+      }
+    }
+
+    socket.on('upload_result', (data) => {
+      updateProgressBar(100);
+      // "Test läuft..." entfernen:
+      resultsDiv.innerHTML = resultsDiv.innerHTML.replace('<div class="result">Test läuft...</div>', '');
+      uploadSpeed = data.speed;
+      resultsDiv.innerHTML += '<div class="result">Upload: ' + uploadSpeed.toFixed(2) + ' Mbps</div>'; 
+      createChart();
+      startButton.disabled = false;
+    });
+
+    startButton.addEventListener('click', () => {
+      startButton.disabled = true;
+      resultsDiv.innerHTML = '<div class="result">Test läuft...</div>'; 
+      startPingTest();
+    });
+
+    function updateProgressBar(progress) {
+      progressBarFill.style.width = progress + '%';
+    }
+
+  </script>
+</body>
+</html>
