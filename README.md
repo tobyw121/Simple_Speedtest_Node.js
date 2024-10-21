@@ -3,7 +3,7 @@ clone this Docker and start the docker with
 * ` docker build -t speedtest .`
 * `docker run -p 5000:5000 -v $(pwd):/app speedtest`
 
-
+In your browser, open  ` 127.0.0.1:5000 .` or `your_server_ip:5000`
 
 
 
