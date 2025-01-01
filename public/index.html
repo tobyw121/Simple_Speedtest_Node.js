@@ -1,246 +1,305 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>Speedtest</title>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
-  <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
-  <style>
-    body { 
-      font-family: 'Roboto', sans-serif; 
-      display: flex; 
-      flex-direction: column; 
-      align-items: center; 
-      justify-content: center; 
-      min-height: 100vh;  
-      background-color: #f4f4f4;  
-      margin: 0; 
-    }
-    h1 { color: #333; }
-    #results { 
-      margin-top: 20px; 
-      font-size: 18px; 
-      text-align: center; 
-    }
-    .result { margin-bottom: 10px; }
-    .chart-container { 
-      width: 80%; 
-      height: 300px; 
-      margin: 20px auto; 
-    }
-    #progressBar {
-      width: 50%;
-      height: 20px;
-      background-color: #e0e0e0;
-      border-radius: 5px;
-      margin-bottom: 20px;
-    }
-    #progressBarFill {
-      height: 100%;
-      background-color: #4caf50;
-      width: 0%;
-      border-radius: 5px;
-    }
-  </style>
+    <title>Speedtest</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+    <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+    <style>
+        body { 
+            font-family: 'Roboto', sans-serif; 
+            display: flex; 
+            flex-direction: column; 
+            align-items: center; 
+            justify-content: flex-start; /* Oben beginnen statt zentriert */
+            min-height: 100vh; 
+            background-color: #f4f4f4; 
+            margin: 0; 
+        }
+        h1 { color: #333; }
+        .container {
+            display: flex;
+            justify-content: space-around; /* Platz zwischen den Tests */
+            width: 100%;
+            margin-top: 20px;
+        }
+        .test-container {
+            width: 45%; /
+            border: 1px solid #ccc;
+            padding: 10px;
+        }
+        .results { 
+            font-size: 18px; 
+            text-align: center; 
+        }
+        .result { margin-bottom: 10px; }
+        #progressBar {
+            width: 100%;
+            height: 20px;
+            background-color: #e0e0e0;
+            border-radius: 5px;
+            margin-bottom: 20px;
+        }
+        #progressBarFill {
+            height: 100%;
+            background-color: #4caf50;
+            width: 0%;
+            border-radius: 5px;
+        }
+        .chart-container {
+            width: 100%;
+            height: 300px;
+            margin: 20px auto;
+        }
+    </style>
 </head>
 <body>
-  <h1>Speedtest</h1>
-  <button id="startButton">Test starten</button>
-  <div id="progressBar">
-    <div id="progressBarFill"></div>
-  </div>
-  <div id="results">
-    <div class="result">Bitte klicken Sie auf "Test starten".</div>
-  </div>
-  <div class="chart-container">
-    <div id="speedChart"></div>
-  </div>
-  <script>
-    const NUM_FILES = 5; 
-    const socket = io();
+    <h1>Speedtest</h1>
 
-    const resultsDiv = document.getElementById('results');
-    const startButton = document.getElementById('startButton');
-    const progressBarFill = document.getElementById('progressBarFill');
-    let averagePing, downloadSpeed, uploadSpeed;
+    <button id="startButton">Test starten</button>
 
-    function createChart() {
-      var data = [{
-        x: ['Ping (ms)', 'Download (Mbps)', 'Upload (Mbps)'],
-        y: [averagePing, downloadSpeed, uploadSpeed],
-        type: 'bar',
-        marker: {
-          color: ['rgba(255, 99, 132, 0.8)', 'rgba(54, 162, 235, 0.8)', 'rgba(255, 206, 86, 0.8)']
+    <div class="container">
+        <div class="test-container" id="localTestContainer">
+            <h2>Lokaler Test</h2>
+            <div id="progressBar">
+                <div id="progressBarFill"></div>
+            </div>
+            <div class="results" id="localResults">
+                <div class="result">Ergebnisse des lokalen Tests werden hier angezeigt.</div>
+            </div>
+            <div class="chart-container">
+                <div id="localSpeedChart"></div>
+            </div>
+        </div>
+
+        <div class="test-container" id="ostWidgetContainer">
+            <h2>OpenSpeedTest</h2>
+            <div style="text-align:right;">
+                <div style="min-height:360px;">
+                    <div style="width:100%;height:0;padding-bottom:50%;position:relative;">
+                        <iframe style="border:none;position:absolute;top:0;left:0;width:100%;height:100%;min-height:360px;border:none;overflow:hidden !important;" src="//openspeedtest.com/speedtest"></iframe>
+                    </div>
+                </div>
+                Provided by <a href="https://openspeedtest.com">OpenSpeedtest.com</a>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const NUM_FILES = 5; // Anzahl der Testdateien fÃ¼r den lokalen Download/Upload
+        const socket = io(); // Verbindung zum eigenen Server (fuer lokalen Test)
+
+        const localResultsDiv = document.getElementById('localResults');
+        const startButton = document.getElementById('startButton');
+        const progressBarFill = document.getElementById('progressBarFill');
+        const localSpeedChart = document.getElementById('localSpeedChart'); 
+
+        // Verbindung zum eigenen Server (fuer lokalen Test)
+        socket.on('connect', () => {
+            console.log('Verbunden mit Server');
+        });
+
+        socket.on('disconnect', () => {
+            console.log('Verbindung zum Server getrennt');
+            localResultsDiv.innerHTML += '<div class="result">Verbindung zum Server getrennt!</div>';
+        });
+
+        // --- Code für den lokalen Test ---
+        let pingCount = 10, pings = [], pingId = 0;
+        let averagePing, downloadSpeed, uploadSpeed; // Ergebnisse des lokalen Tests
+
+        function createChart() {
+            console.log("createChart() aufgerufen");
+            var data = [{
+                x: ['Ping (ms)', 'Download (Mbps)', 'Upload (Mbps)'],
+                y: [averagePing, downloadSpeed, uploadSpeed],
+                type: 'bar',
+                marker: {
+                    color: ['rgba(255, 99, 132, 0.8)', 'rgba(54, 162, 235, 0.8)', 'rgba(255, 206, 86, 0.8)']
+                }
+            }];
+
+            var layout = {
+                title: 'Lokaler Speedtest Ergebnisse',
+                yaxis: {
+                    title: 'Geschwindigkeit',
+                    rangemode: 'tozero'
+                }
+            };
+
+            Plotly.newPlot(localSpeedChart, data, layout);
         }
-      }];
 
-      var layout = {
-        title: 'Speedtest Ergebnisse',
-        yaxis: {
-          title: 'Geschwindigkeit',
-          rangemode: 'tozero' 
-        }
-      };
+        function startPingTest() {
+            console.log("startPingTest() aufgerufen");
+            // Lokaler Ping-Test
+            // Alte Ergebnisse loeschen:
+            localResultsDiv.innerHTML = '<div class="result">Test lÃ¤uft...</div>';
 
-      Plotly.newPlot('speedChart', data, layout);
-    }
+            updateProgressBar(0);
 
-    socket.on('connect', () => {
-      console.log('Connected to server');
-    });
+            // Alten pong Listener entfernen
+            socket.off('pong');
 
-    socket.on('disconnect', () => {
-      console.log('Disconnected from server');
-      resultsDiv.innerHTML += '<div class="result">Verbindung zum Server getrennt!</div>';
-    });
+            socket.on('pong', (data) => {
+                console.log("Lokaler Ping erhalten:", data);
+                if (data.id === pingId) {
+                    pings.push(Date.now() - data.time);
+                    if (--pingCount > 0) setTimeout(sendPing, 100);
+                    else {
+                        averagePing = pings.reduce((a, b) => a + b, 0) / pings.length;
+                        localResultsDiv.innerHTML += '<div class="result">Ping: ' + averagePing.toFixed(2) + ' ms</div>';
 
-    // Ping Test
-    let pingCount = 10, pings = [], pingId = 0;
+                        // Jitter aus den Ping-Werten berechnen (Client-seitig)
+                        let jitter = null;
+                        if (pings.length > 1) {
+                            const meanPing = averagePing;
+                            const squaredDifferences = pings.map(ping => Math.pow(ping - meanPing, 2));
+                            const variance = squaredDifferences.reduce((a, b) => a + b, 0) / (pings.length - 1);
+                            jitter = Math.sqrt(variance);
+                        }
+                        if (jitter !== null) {
+                            localResultsDiv.innerHTML += '<div class="result">Jitter: ' + jitter.toFixed(2) + ' ms</div>';
+                        }
 
-    function startPingTest() {
-      // Alte Ergebnisse löschen:
-      resultsDiv.innerHTML = '<div class="result">Test läuft...</div>';
-
-      updateProgressBar(0);
-
-      // Alten pong Listener entfernen
-      socket.off('pong'); 
-
-      socket.on('pong', (data) => { 
-        if (data.id === pingId) { 
-          pings.push(Date.now() - data.time);
-          if (--pingCount > 0) setTimeout(sendPing, 100);
-          else {
-            averagePing = pings.reduce((a, b) => a + b, 0) / pings.length;
-            resultsDiv.innerHTML += '<div class="result">Ping: ' + averagePing.toFixed(2) + ' ms</div>'; 
-
-            // Jitter aus den Ping-Werten berechnen (Client-seitig)
-            let jitter = null;
-            if (pings.length > 1) {
-              const meanPing = averagePing;
-              const squaredDifferences = pings.map(ping => Math.pow(ping - meanPing, 2));
-              const variance = squaredDifferences.reduce((a, b) => a + b, 0) / (pings.length - 1);
-              jitter = Math.sqrt(variance);
-            }
-            if (jitter !== null) {
-              resultsDiv.innerHTML += '<div class="result">Jitter: ' + jitter.toFixed(2) + ' ms</div>';
-            }
-
-            updateProgressBar(10);
-            createChart();
-            startDownloadTest();
-
-            // ping_result Event an den Server senden
-            socket.emit('ping_result', { ping: averagePing, jitter: jitter }); 
-          }
-        }
-      });
-      sendPing();
-    }
-
-    function sendPing() { 
-      pingId++;
-      socket.emit('ping', { time: Date.now(), id: pingId }); 
-    }
-
-    // Download Test
-    let downloadStartTime;
-    let downloadedFiles = 0;
-function startDownloadTest() {
-      downloadStartTime = Date.now();
-      downloadedFiles = 0;
-      socket.emit('download_start');
-    }
-
-    socket.on('download_order', (data) => {
-      updateProgressBar(30);
-      let fileOrder = data.order;
-      function downloadNextFile() {
-        if (downloadedFiles < NUM_FILES) {
-          let fileId = fileOrder[downloadedFiles];
-          fetch('/download/' + fileId)
-            .then(() => {
-              downloadedFiles++;
-              downloadNextFile();
-            })
-            .catch(error => {
-              console.error('Download error:', error);
-              resultsDiv.innerHTML += '<div class="result">Download fehlgeschlagen: ' + error + '</div>'; 
-              socket.emit('download_end'); 
+                        updateProgressBar(10);
+                        createChart(); 
+                        startDownloadTest();
+                        socket.emit('ping_result', { ping: averagePing, jitter: jitter });
+                    }
+                }
             });
-        } else {
-          socket.emit('download_end'); 
+            sendPing();
         }
-      }
-      downloadNextFile();
-    });
 
-    socket.on('download_result', (data) => {
-      updateProgressBar(60);
-      downloadSpeed = data.speed;
-      resultsDiv.innerHTML += '<div class="result">Download: ' + downloadSpeed.toFixed(2) + ' Mbps</div>'; 
-      createChart();
-      startUploadTest(); 
-    });
+        function sendPing() {
+            console.log("Sende Ping");
+            pingId++;
+            socket.emit('ping', { time: Date.now(), id: pingId });
+        }
 
-    // Upload Test
-    let uploadStartTime;
-    let uploadedChunks = 0;
-    let chunkSize = 1024 * 1024; 
+        // Download Test
+        let downloadStartTime;
+        let downloadedFiles = 0;
 
-    function startUploadTest() {
-      uploadStartTime = Date.now();
-      uploadedChunks = 0;
-      socket.emit('upload_start');
-    }
+        function startDownloadTest() {
+            console.log("startDownloadTest() aufgerufen");
+            // Lokaler Download-Test
+            downloadStartTime = Date.now();
+            downloadedFiles = 0;
+            socket.emit('download_start');
+        }
 
-    socket.on('upload_chunk_size', (data) => {
-      updateProgressBar(70);
-      chunkSize = data.size;
-      uploadNextChunk(); 
-    });
+        socket.on('download_order', (data) => {
+            console.log("Lokaler Download-Order erhalten:", data);
+            updateProgressBar(30);
+            let fileOrder = data.order;
 
-    function uploadNextChunk() {
-      if (uploadedChunks < NUM_FILES) {
-        let data = new Uint8Array(chunkSize);
-        fetch('/upload', { 
-          method: 'POST', 
-          body: data,
-          credentials: 'same-origin'
-        })
-          .then(() => {
-            uploadedChunks++;
+            function downloadNextFile() {
+                if (downloadedFiles < NUM_FILES) {
+                    let fileId = fileOrder[downloadedFiles];
+                    console.log("Lokaler Download gestartet fÃ¼r File:", fileId);
+                    fetch('/download/' + fileId)
+                        .then((response) => {
+                            console.log("Lokaler Download Response:", response);
+                            if (!response.ok) {
+                                throw new Error('Netzwerkantwort war nicht ok');
+                            }
+                            downloadedFiles++;
+                            downloadNextFile();
+                        })
+                        .catch(error => {
+                            console.error('Download Fehler:', error);
+                            localResultsDiv.innerHTML += '<div class="result">Download fehlgeschlagen: ' + error + '</div>';
+                            socket.emit('download_end');
+                        });
+                } else {
+                    socket.emit('download_end');
+                }
+            }
+            downloadNextFile();
+        });
+
+        socket.on('download_result', (data) => {
+            console.log("Lokaler Download abgeschlossen:", data);
+            updateProgressBar(60);
+            downloadSpeed = data.speed;
+            localResultsDiv.innerHTML += '<div class="result">Download: ' + downloadSpeed.toFixed(2) + ' Mbps</div>';
+            createChart(); 
+            startUploadTest();
+        });
+
+        // Upload Test
+        let uploadStartTime;
+        let uploadedChunks = 0;
+        let chunkSize = 1024 * 1024;
+
+        function startUploadTest() {
+            console.log("startUploadTest() aufgerufen");
+            // Lokaler Upload-Test
+            uploadStartTime = Date.now();
+            uploadedChunks = 0;
+            socket.emit('upload_start');
+        }
+
+        socket.on('upload_chunk_size', (data) => {
+            console.log("Lokaler Upload Chunk Size erhalten:", data);
+            updateProgressBar(70);
+            chunkSize = data.size;
             uploadNextChunk();
-          })
-          .catch(error => {
-            console.error('Upload error:', error);
-            resultsDiv.innerHTML += '<div class="result">Upload fehlgeschlagen: ' + error + '</div>'; 
-            socket.emit('upload_end'); 
-          });
-      } else {
-        socket.emit('upload_end'); 
-      }
-    }
+        });
 
-    socket.on('upload_result', (data) => {
-      updateProgressBar(100);
-      // "Test läuft..." entfernen:
-      resultsDiv.innerHTML = resultsDiv.innerHTML.replace('<div class="result">Test läuft...</div>', '');
-      uploadSpeed = data.speed;
-      resultsDiv.innerHTML += '<div class="result">Upload: ' + uploadSpeed.toFixed(2) + ' Mbps</div>'; 
-      createChart();
-      startButton.disabled = false;
-    });
+        function uploadNextChunk() {
+            console.log("Lokaler Upload Chunk:", uploadedChunks);
+            if (uploadedChunks < NUM_FILES) {
+                let data = new Uint8Array(chunkSize);
+                fetch('/upload', {
+                    method: 'POST',
+                    body: data,
+                    credentials: 'same-origin'
+                })
+                    .then((response) => {
+                        console.log("Lokaler Upload Response:", response);
+                        if (!response.ok) {
+                            throw new Error('Netzwerkantwort war nicht ok');
+                        }
+                        uploadedChunks++;
+                        uploadNextChunk();
+                    })
+                    .catch(error => {
+                        console.error('Upload Fehler:', error);
+                        localResultsDiv.innerHTML += '<div class="result">Upload fehlgeschlagen: ' + error + '</div>';
+                        socket.emit('upload_end');
+                    });
+            } else {
+                socket.emit('upload_end');
+            }
+        }
 
-    startButton.addEventListener('click', () => {
-      startButton.disabled = true;
-      resultsDiv.innerHTML = '<div class="result">Test läuft...</div>'; 
-      startPingTest();
-    });
+        socket.on('upload_result', (data) => {
+            console.log("Lokaler Upload abgeschlossen:", data);
+            updateProgressBar(100);
+            uploadSpeed = data.speed;
+            localResultsDiv.innerHTML += '<div class="result">Upload: ' + uploadSpeed.toFixed(2) + ' Mbps</div>';
+            createChart(); // Hier die Chart-Funktion einfÃ¼gen!
+            finishTest(); // AufrÃ¤umen und Button wieder aktivieren
+        });
 
-    function updateProgressBar(progress) {
-      progressBarFill.style.width = progress + '%';
-    }
+        function updateProgressBar(progress) {
+            console.log("updateProgressBar() aufgerufen mit:", progress);
+            progressBarFill.style.width = progress + '%';
+        }
 
-  </script>
+        function finishTest() {
+            console.log("Test abgeschlossen");
+            startButton.disabled = false; // Button wieder aktivieren
+            localResultsDiv.innerHTML = localResultsDiv.innerHTML.replace('<div class="result">Test lÃ¤uft...</div>', ''); // "Test lÃ¤uft..." 
+        }
+
+        startButton.addEventListener('click', () => {
+            console.log("Start Button geklickt");
+            startButton.disabled = true; // Button wÃ¤hrend des Tests deaktivieren
+            startPingTest(); // Lokalen Test starten
+        });
+    </script>
 </body>
 </html>
